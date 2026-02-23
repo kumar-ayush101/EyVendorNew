@@ -105,13 +105,17 @@ func runBackgroundMetrics(vendorID string) {
 
 	for _, b := range batches {
 		qty := 0
-		for _, p := range b.PartsManifest { qty += p.Quantity }
+		for _, p := range b.PartsManifest {
+			qty += p.Quantity
+		}
 		batchTotalQtyMap[b.BatchAllocationID] = qty
 	}
 
 	for _, l := range allLogs {
 		parts := strings.Split(l.VehicleID, "#")
-		if len(parts) < 1 { continue }
+		if len(parts) < 1 {
+			continue
+		}
 		logBatchID := parts[0]
 
 		for _, b := range batches {
@@ -151,7 +155,7 @@ func runBackgroundMetrics(vendorID string) {
 			"local_metrics.avg_rating":       avgRating,
 		},
 	}
-	
+
 	_, err = vendorCol.UpdateOne(ctx, bson.M{"vendor_id": vendorID}, update)
 	if err != nil {
 		fmt.Printf("❌ Background update failed for %s: %v\n", vendorID, err)
@@ -187,12 +191,50 @@ func handleOnboarding(c *gin.Context) {
 	})
 }
 
+// --- NEW: Route Handler to get all vendors ---
+func getAllVendors(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Fetch all documents from the vendor collection
+	cursor, err := vendorCol.Find(ctx, bson.M{})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch vendors: " + err.Error()})
+		return
+	}
+	defer cursor.Close(ctx) 
+
+	var vendors []Vendor
+	if err = cursor.All(ctx, &vendors); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error decoding vendor data: " + err.Error()})
+		return
+	}
+
+	if vendors == nil {
+		vendors = []Vendor{} // Return empty array instead of null
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"count": len(vendors),
+		"data":  vendors,
+	})
+}
+
 func main() {
 	connectDB()
 	r := gin.Default()
+
 	r.POST("/api/vendor", handleOnboarding)
+	r.GET("/api/vendors", getAllVendors) // <-- NEW ROUTE ADDED HERE
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
 	})
-	r.Run(":8080")
+
+	// Safely bind to the port Render provides, otherwise fallback to 8080 locally
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	r.Run(":" + port)
 }
