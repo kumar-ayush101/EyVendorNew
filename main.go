@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/cors" // <-- NEW: Import the CORS package
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
@@ -17,6 +18,7 @@ import (
 )
 
 // --- Structs ---
+// ... (Keep all your existing structs exactly the same: PartManifest, Batch, LogEntry, LocalMetrics, Vendor) ...
 
 type PartManifest struct {
 	PartName string `bson:"part_name"`
@@ -75,12 +77,12 @@ func connectDB() {
 }
 
 func runBackgroundMetrics(vendorID string) {
+    // ... (Keep your existing runBackgroundMetrics code exactly as it is) ...
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	fmt.Printf("🚀 Starting background metrics calculation for: %s\n", vendorID)
 
-	// 1. Fetch Vendor current data (needed for local rating)
 	var currentVendor Vendor
 	err := vendorCol.FindOne(ctx, bson.M{"vendor_id": vendorID}).Decode(&currentVendor)
 	if err != nil {
@@ -88,12 +90,10 @@ func runBackgroundMetrics(vendorID string) {
 		return
 	}
 
-	// 2. Fetch Batches
 	batchCursor, _ := batchCol.Find(ctx, bson.M{"vendor_details.vendor_id": vendorID})
 	var batches []Batch
 	batchCursor.All(ctx, &batches)
 
-	// 3. Fetch Logs
 	logCursor, _ := logsCol.Find(ctx, bson.M{})
 	var allLogs []LogEntry
 	logCursor.All(ctx, &allLogs)
@@ -136,17 +136,14 @@ func runBackgroundMetrics(vendorID string) {
 		}
 	}
 
-	// --- 4. NEW CALCULATIONS ---
 	durabilityScore := 100 // Default if no jobs
 	if totalJobs > 0 {
 		durabilityScore = ((totalJobs - failedJobs) * 100) / totalJobs
 	}
 
-	// avg_rating = (durability_score + 10 * local_rating) / 2
 	localRating := currentVendor.LocalMetrics.CompanyLocalRating
 	avgRating := (float64(durabilityScore) + (10.0 * localRating)) / 2.0
 
-	// 5. Final Patch Update
 	update := bson.M{
 		"$set": bson.M{
 			"local_metrics.total_jobs":       totalJobs,
@@ -191,12 +188,10 @@ func handleOnboarding(c *gin.Context) {
 	})
 }
 
-// --- NEW: Route Handler to get all vendors ---
 func getAllVendors(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Fetch all documents from the vendor collection
 	cursor, err := vendorCol.Find(ctx, bson.M{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch vendors: " + err.Error()})
@@ -211,7 +206,7 @@ func getAllVendors(c *gin.Context) {
 	}
 
 	if vendors == nil {
-		vendors = []Vendor{} // Return empty array instead of null
+		vendors = []Vendor{} 
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -224,14 +219,17 @@ func main() {
 	connectDB()
 	r := gin.Default()
 
+	// --- NEW: Add CORS Middleware ---
+	// cors.Default() enables default CORS settings (allows all origins, all methods)
+	r.Use(cors.Default())
+
 	r.POST("/api/vendor", handleOnboarding)
-	r.GET("/api/vendors", getAllVendors) // <-- NEW ROUTE ADDED HERE
+	r.GET("/api/vendors", getAllVendors) 
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "alive"})
 	})
 
-	// Safely bind to the port Render provides, otherwise fallback to 8080 locally
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
